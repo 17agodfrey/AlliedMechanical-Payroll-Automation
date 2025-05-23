@@ -1,0 +1,9 @@
+the plan: 
+
+
+- as you're going through the rows in the payroll document, add another value to each row, a value in a column called "Dist #"- which is just the number of row we're on for the current employee. 
+
+- then when we're processing the tax doc, we just take the employee name, the Dist #, and the total employer tax. 
+
+
+- for each row of the main table, we'll have the employee name, the job #, the Dist #,the reg pay, the O/T pay, and the total employer tax... yea

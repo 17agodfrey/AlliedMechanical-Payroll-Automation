@@ -30,11 +30,11 @@ def apply_formatting_to_excel(output_file):
 
     # Format Reg columns (every other col starting at 2), from row 3 up to row before TOTAL row
     for row in range(3, total_row):
-        for col in range(2, max_col + 1, 2):  # Reg columns (every other column starting at 2)
+        for col in range(2, max_col + 1, 3):  # Reg columns (every other column starting at 2)
             ws.cell(row=row, column=col).fill = light_blue
 
     # Format the TOTAL row only (row = total_row)
     for col in range(2, max_col + 1):
-        ws.cell(row=total_row, column=col).fill = blue_green
+        ws.cell(row=total_row+1, column=col).fill = blue_green
 
     wb.save(output_file)
