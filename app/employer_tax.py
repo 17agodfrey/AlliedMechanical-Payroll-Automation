@@ -2,6 +2,8 @@ import re
 import pandas as pd
 
 def calculate_employer_tax(filepath):
+    errors = []
+    
     # Read the whole sheet without assuming headers
     df = pd.read_excel(filepath, sheet_name="Payroll History", header=None)
 
@@ -13,6 +15,7 @@ def calculate_employer_tax(filepath):
             break
 
     if tax_col_idx is None:
+        errors.append("Could not find 'TOTAL EMPLOYER TAX' column in the first row.")
         raise ValueError("Could not find 'TOTAL EMPLOYER TAX' column in the first row.")
 
     tax_data = {}
@@ -34,15 +37,17 @@ def calculate_employer_tax(filepath):
             if name not in tax_data:
                 tax_data[name] = []
             tax_data[name].append((dist, tax))
-    return tax_data
+    return tax_data, errors
             
 def get_emp_tax(tax_data, employee_name, index):
+    errors = []
     if employee_name in tax_data and index <= len(tax_data[employee_name]):
         # go through the array of tuples and find the one with the same dist
         for dist, tax in tax_data[employee_name]:
             if dist == index:
-                return tax
-        return 0.0
+                return tax, errors 
+        return 0.0, errors
     else: 
-        print(f"Employee {employee_name} not found or index out of range.")
-        return 0.0
+        errors.append(f"Error getting employer tax for Employee {employee_name}. not found or index out of range.")
+        # print(f"Employee {employee_name} not found or index out of range.")
+        return 0.0, errors

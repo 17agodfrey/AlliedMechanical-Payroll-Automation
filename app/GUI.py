@@ -38,8 +38,13 @@ def process_files():
         return
 
     try:
-        extract_job_costing_from_raw_excel(payroll_path, tax_path, output_path)
+        output_file, errors = extract_job_costing_from_raw_excel(payroll_path, tax_path, output_path)
         messagebox.showinfo("Success", f"File saved to:\n{output_path}")
+        
+        if errors:
+            messagebox.showerror("Errors Occurred", "\n".join(errors))
+        
+        
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred:\n{e}")
 

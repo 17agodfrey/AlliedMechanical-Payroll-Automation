@@ -5,7 +5,7 @@ def apply_formatting_to_excel(output_file):
     wb = load_workbook(output_file)
     ws = wb.active
 
-    sea_green = PatternFill(start_color="2E8B57", end_color="2E8B57", fill_type="solid")
+    sea_green = PatternFill(start_color="25e63c", end_color="25e63c", fill_type="solid")
     light_blue = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
     blue_green = PatternFill(start_color="66CDAA", end_color="66CDAA", fill_type="solid")
 

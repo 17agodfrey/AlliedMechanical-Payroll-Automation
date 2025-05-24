@@ -4,17 +4,26 @@ import os
 from formatting import apply_formatting_to_excel
 from employer_tax import calculate_employer_tax, get_emp_tax
 
-def update_bonus_vacation(cell_value, total_bonus, total_vacation):
+def update_bonus_vacation(cell_value, total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i):
     if isinstance(cell_value, str):
         if 'BN' in cell_value:
             match = re.search(r'BN\s*([\d,]+\.\d{2})', cell_value)
             if match:
                 total_bonus += float(match.group(1).replace(',', ''))
+                employee_has_BN = True
+                
         elif 'VAC' in cell_value:
             match = re.search(r'VAC\s*([\d,]+\.\d{2})', cell_value)
             if match:
                 total_vacation += float(match.group(1).replace(',', ''))
-    return total_bonus, total_vacation
+                employee_has_VAC = True
+                
+        #handle special case: VAC and BN both reported for a single employee. 
+        # WARNING: this only works if the rows are right next to each other. Ie. 3,4 or 1,2... etc. 
+        if (employee_has_VAC and employee_has_BN):
+            c_employee_row_i = c_employee_row_i - 1       
+             
+    return total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i
 
 def process_payroll_file(filepath, tax_data):
     df = pd.read_excel(filepath, sheet_name='Payroll Register', header=None)
@@ -26,6 +35,10 @@ def process_payroll_file(filepath, tax_data):
     total_vacation = 0.0
     un_coded_pay = 0.0
     gross_total = 0.0
+    
+    errors = []
+    employee_has_BN = False
+    employee_has_VAC = False
 
     for i in range(len(df)):
         row = df.iloc[i]                
@@ -37,9 +50,11 @@ def process_payroll_file(filepath, tax_data):
             current_employee = row[0].split('\n')[0] if '\n' in row[0] else row[0]
             current_employee = re.sub(r'\s*,\s*', ', ', str(current_employee).strip()) ## Normalize name, just in case 
             c_employee_row_i = 1
+            employee_has_BN = False
+            employee_has_VAC = False
             
             ##handle bonus and vacation
-            total_bonus, total_vacation = update_bonus_vacation(row[6], total_bonus, total_vacation)
+            total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i)
             
             job_number = '0001'
             if "W-In Cost" in row[0]:
@@ -54,7 +69,9 @@ def process_payroll_file(filepath, tax_data):
                         c_employee_row_i = c_employee_row_i - 1
                     continue
 
-                emp_tax = get_emp_tax(tax_data, current_employee, c_employee_row_i)
+                emp_tax, errors_get_emp_tax = get_emp_tax(tax_data, current_employee, c_employee_row_i)
+                if errors_get_emp_tax:
+                    errors.extend(errors_get_emp_tax)
 
                 key = (current_employee, job_number)
                 if key in job_lookup:
@@ -70,7 +87,8 @@ def process_payroll_file(filepath, tax_data):
                         'Emp Tax': emp_tax
                     }
             except Exception as e:
-                print(f"Error parsing row {i}: {e}")
+                errors.append(f"Error parsing Associate ID row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}")
+                # print(f"Error parsing Associate ID row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}")
 
         elif "W-In Cost" in row[0] and current_employee:
             match = re.search(r'W-In Cost:\s*(\d{4,})-(\d{4,})', row[0])
@@ -78,7 +96,7 @@ def process_payroll_file(filepath, tax_data):
             
             c_employee_row_i = c_employee_row_i + 1
 
-            total_bonus, total_vacation = update_bonus_vacation(row[6], total_bonus, total_vacation)
+            total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i)
             
             try:
                 reg_pay = float(str(row[4]).replace(',', '')) if pd.notna(row[4]) else 0.0
@@ -86,7 +104,9 @@ def process_payroll_file(filepath, tax_data):
                 if reg_pay == 0.0 and ot_pay == 0.0:
                     continue
                 
-                emp_tax = get_emp_tax(tax_data, current_employee, c_employee_row_i)
+                emp_tax, errors_get_emp_tax = get_emp_tax(tax_data, current_employee, c_employee_row_i)
+                if errors_get_emp_tax:
+                    errors.extend(errors_get_emp_tax)
 
                 key = (current_employee, job_number)
                 if key in job_lookup:
@@ -102,15 +122,17 @@ def process_payroll_file(filepath, tax_data):
                         'Emp Tax': emp_tax
                     }
             except Exception as e:
-                print(f"Error parsing row {i}: {e}")
-                            #handle UTO
+                errors.append(f"Error parsing row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}")
+                # print(f"Error parsing row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee} : {e}")
+                
+        #handle UTO
         elif isinstance(row[3], str) and 'UTO' in row[3]:
                 continue
         # Handle rows with no W-In Cost but containing Reg/OT pay (Uncoded pay, but not bonues and etc) 
         elif "H Dept" in row[0] and current_employee:              
             c_employee_row_i = c_employee_row_i + 1
             
-            total_bonus, total_vacation = update_bonus_vacation(row[6], total_bonus, total_vacation)
+            total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i)
             
             try:
                 reg_pay = float(str(row[4]).replace(',', '')) if pd.notna(row[4]) else 0.0
@@ -118,7 +140,8 @@ def process_payroll_file(filepath, tax_data):
                 if reg_pay > 0.0 or ot_pay > 0.0:
                     un_coded_pay += reg_pay + ot_pay
             except Exception as e:
-                print(f"Error parsing uncoded pay row {i}: {e}")
+                errors.append((f"Error parsing Uncoded Pay row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}"))
+                # print(f"Error parsing Uncoded Pay row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}")
 
         elif isinstance(row[7], str) and 'Gross' in row[7]:
             match = re.search(r'Gross\s*([\d,]+\.\d{2})', row[7])
@@ -126,8 +149,9 @@ def process_payroll_file(filepath, tax_data):
                 try:
                     gross_total += float(match.group(1).replace(',', ''))
                 except Exception as e:
-                    print(f"Error parsing Gross value on row {i}: {e}")
-    
+                    errors.append(f"Error parsing Gross Pay in Payroll file. ERROR : {e}")
+                    # print(f"Error parsing Gross Pay in Payroll file. ERROR : {e}")
+
 
     ######################################################################## 
 
@@ -203,9 +227,9 @@ def process_payroll_file(filepath, tax_data):
         pay_total_row.extend([round(reg_total, 2), round(ot_total, 2), round(emp_tax_total, 2)])
         grand_total_row.extend([round(reg_total + ot_total + emp_tax_total, 2), '', ''])
 
-    # Append final values to each row ------ idk what this was doing tbh
-    pay_total_row.append(round(grand_sum_total_pay, 2))
-    grand_total_row.append(round(grand_sum_total_pay + grand_sum_total_tax, 2))
+    # Append final values to each row ---- .... not really needed and kinda misleading idk. We're reporting elsewhere (summary table) 
+    # pay_total_row.append(round(grand_sum_total_pay, 2))
+    # grand_total_row.append(round(grand_sum_total_pay + grand_sum_total_tax, 2))
 
 
     # Combine everything
@@ -215,17 +239,23 @@ def process_payroll_file(filepath, tax_data):
     ]
 
     final_df = pd.DataFrame(final_data)
-    return final_df, grand_sum_total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job
+    return final_df, grand_sum_total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, errors
 
 
 def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_file):
+    errors = []
     
     # Process the employer tax file
-    tax_data = calculate_employer_tax(tax_filepath)
-    
+    tax_data, errors_tax = calculate_employer_tax(tax_filepath)
+    if errors_tax:
+        errors.extend(errors_tax)
+        print("Errors in tax file processing:", errors_tax)
     
     # Process the payroll file
-    payroll_df, total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job = process_payroll_file(payroll_filepath, tax_data)
+    payroll_df, total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, errors_payroll = process_payroll_file(payroll_filepath, tax_data)
+    if errors_payroll:
+        errors.extend(errors_payroll)
+        print("Errors in payroll file processing:", errors_payroll)
     
     # Get all unique job numbers from both dictionaries
     all_jobs = sorted(set(total_pay_per_job.keys()).union(total_emp_tax_per_job.keys()))
@@ -275,7 +305,7 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
 
     apply_formatting_to_excel(output_file)
 
-    return output_file
+    return output_file, errors
 
 # Example:
 # extract_job_costing_from_raw_excel("payroll/payroll_test_12.xls", "tax/tax_test_12.xlsx", "formatted_output_12.xlsx")

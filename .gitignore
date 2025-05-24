@@ -176,3 +176,6 @@ cython_debug/
 # Ignore Excel files
 *.xlsx
 *.xls
+
+# Ignore that one Carl Latimer Text doc
+Carl Latimer 16.txt
