@@ -2,7 +2,9 @@ import pandas as pd
 import re
 import os
 from formatting import apply_formatting_to_excel
-from employer_tax import calculate_employer_tax, get_emp_tax
+from taxes import calculate_tax, get_tax
+from openpyxl.utils import get_column_letter
+
 
 def update_bonus_vacation(cell_value, total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i):
     if isinstance(cell_value, str):
@@ -69,22 +71,26 @@ def process_payroll_file(filepath, tax_data):
                         c_employee_row_i = c_employee_row_i - 1
                     continue
 
-                emp_tax, errors_get_emp_tax = get_emp_tax(tax_data, current_employee, c_employee_row_i)
-                if errors_get_emp_tax:
-                    errors.extend(errors_get_emp_tax)
+                emp_tax, memo_401k, errors_get_tax = get_tax(tax_data, current_employee, c_employee_row_i)
+                if pd.isna(memo_401k): memo_401k = 0.0
+                
+                if errors_get_tax:
+                    errors.extend(errors_get_tax)
 
                 key = (current_employee, job_number)
                 if key in job_lookup:
                     job_lookup[key]['Reg Pay'] += reg_pay
                     job_lookup[key]['OT Pay'] += ot_pay
                     job_lookup[key]['Emp Tax'] += emp_tax
+                    job_lookup[key]['Memo 401k'] += memo_401k
                 else:
                     job_lookup[key] = {
                         'Employee': current_employee,
                         'Job Number': job_number,
                         'Reg Pay': reg_pay,
                         'OT Pay': ot_pay,
-                        'Emp Tax': emp_tax
+                        'Emp Tax': emp_tax,
+                        'Memo 401k': memo_401k
                     }
             except Exception as e:
                 errors.append(f"Error parsing Associate ID row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}")
@@ -104,22 +110,27 @@ def process_payroll_file(filepath, tax_data):
                 if reg_pay == 0.0 and ot_pay == 0.0:
                     continue
                 
-                emp_tax, errors_get_emp_tax = get_emp_tax(tax_data, current_employee, c_employee_row_i)
-                if errors_get_emp_tax:
-                    errors.extend(errors_get_emp_tax)
+                emp_tax, memo_401k, errors_get_tax = get_tax(tax_data, current_employee, c_employee_row_i)
+                if pd.isna(memo_401k): memo_401k = 0.0
+
+                
+                if errors_get_tax:
+                    errors.extend(errors_get_tax)
 
                 key = (current_employee, job_number)
                 if key in job_lookup:
                     job_lookup[key]['Reg Pay'] += reg_pay
                     job_lookup[key]['OT Pay'] += ot_pay
                     job_lookup[key]['Emp Tax'] += emp_tax
+                    job_lookup[key]['Memo 401k'] += memo_401k
                 else:
                     job_lookup[key] = {
                         'Employee': current_employee,
                         'Job Number': job_number,
                         'Reg Pay': reg_pay,
                         'OT Pay': ot_pay,
-                        'Emp Tax': emp_tax
+                        'Emp Tax': emp_tax,
+                        'Memo 401k': memo_401k
                     }
             except Exception as e:
                 errors.append(f"Error parsing row ({c_employee_row_i}) in Payroll file for Current Employee: {current_employee}. ERROR : {e}")
@@ -166,6 +177,7 @@ def process_payroll_file(filepath, tax_data):
         columns.append((job, 'Reg'))
         columns.append((job, 'O/T'))
         columns.append((job, 'Emp Tax'))
+        columns.append((job, 'Memo 401k'))  # Add Memo 401k column if needed
 
     multi_columns = pd.MultiIndex.from_tuples(columns)
 
@@ -181,8 +193,9 @@ def process_payroll_file(filepath, tax_data):
                 row.append(job_entry['Reg Pay'].values[0])
                 row.append(job_entry['OT Pay'].values[0])
                 row.append(job_entry['Emp Tax'].values[0])
+                row.append(job_entry['Memo 401k'].values[0])
             else:
-                row.extend([None, None, None])
+                row.extend([None, None, None, None])
         employee_rows.append(row)
         employee_names.append(employee)
 
@@ -193,11 +206,11 @@ def process_payroll_file(filepath, tax_data):
     file_title = os.path.splitext(os.path.basename(filepath))[0]
     header_row = [file_title]
     for job in job_numbers:
-        header_row += ['Reg', 'O/T', 'Emp Tax']
+        header_row += ['Reg', 'O/T', 'Emp Tax', 'Memo 401k']
 
     top_row = ['Job Number']
     for job in job_numbers:
-        top_row += [job, '', '']
+        top_row += [job, '', '', '']
 
     # Totals rows
     pay_total_row = ['pay total']
@@ -208,24 +221,28 @@ def process_payroll_file(filepath, tax_data):
     
     total_pay_per_job = {}
     total_emp_tax_per_job = {}
+    total_memo_401k_per_job = {}
 
     for job in job_numbers:
         reg_col = pd.to_numeric(output_df[(job, 'Reg')], errors='coerce')
         ot_col = pd.to_numeric(output_df[(job, 'O/T')], errors='coerce')
         emp_tax_col = pd.to_numeric(output_df[(job, 'Emp Tax')], errors='coerce')
+        memo_401k_col = pd.to_numeric(output_df[(job, 'Memo 401k')], errors='coerce')
 
         reg_total = reg_col.sum(skipna=True)
         ot_total = ot_col.sum(skipna=True)
         emp_tax_total = emp_tax_col.sum(skipna=True)
+        memo_401k_total = memo_401k_col.sum(skipna=True)
 
         grand_sum_total_pay += reg_total + ot_total
-        grand_sum_total_tax += emp_tax_total
+        grand_sum_total_tax += emp_tax_total + memo_401k_total
         
         total_pay_per_job[job] = reg_total + ot_total
         total_emp_tax_per_job[job] = emp_tax_total
+        total_memo_401k_per_job[job] = memo_401k_total
 
-        pay_total_row.extend([round(reg_total, 2), round(ot_total, 2), round(emp_tax_total, 2)])
-        grand_total_row.extend([round(reg_total + ot_total + emp_tax_total, 2), '', ''])
+        pay_total_row.extend([round(reg_total, 2), round(ot_total, 2), round(emp_tax_total, 2), round(memo_401k_total, 2)])
+        grand_total_row.extend([round(reg_total + ot_total + emp_tax_total + memo_401k_total, 2), '', '', ''])
 
     # Append final values to each row ---- .... not really needed and kinda misleading idk. We're reporting elsewhere (summary table) 
     # pay_total_row.append(round(grand_sum_total_pay, 2))
@@ -239,20 +256,20 @@ def process_payroll_file(filepath, tax_data):
     ]
 
     final_df = pd.DataFrame(final_data)
-    return final_df, grand_sum_total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, errors
+    return final_df, grand_sum_total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, total_memo_401k_per_job, errors
 
 
 def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_file):
     errors = []
     
     # Process the employer tax file
-    tax_data, errors_tax = calculate_employer_tax(tax_filepath)
+    tax_data, errors_tax = calculate_tax(tax_filepath)
     if errors_tax:
         errors.extend(errors_tax)
         print("Errors in tax file processing:", errors_tax)
     
     # Process the payroll file
-    payroll_df, total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, errors_payroll = process_payroll_file(payroll_filepath, tax_data)
+    payroll_df, total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, total_memo_401k_per_job, errors_payroll = process_payroll_file(payroll_filepath, tax_data)
     if errors_payroll:
         errors.extend(errors_payroll)
         print("Errors in payroll file processing:", errors_payroll)
@@ -265,8 +282,9 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
     for job in all_jobs:
         pay = round(total_pay_per_job.get(job, 0), 2)
         emp_tax = round(total_emp_tax_per_job.get(job, 0), 2)
-        total_cost = round(pay + emp_tax, 2)
-        summary_rows.append([job, pay, emp_tax, total_cost])
+        memo_401k = round(total_memo_401k_per_job.get(job, 0), 2) if total_memo_401k_per_job.get(job, 0) else 0.0
+        total_cost = round(pay + emp_tax + memo_401k, 2)
+        summary_rows.append([job, pay, emp_tax, memo_401k, total_cost])
 
     # Convert to DataFrame
     summary_df = pd.DataFrame(summary_rows)
@@ -286,7 +304,7 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
             
         ]),
         pd.DataFrame([[]]*3),  # 3 empty rows
-        pd.DataFrame([['Job Number', 'Pay (Reg + O/T)', 'Emp Tax', 'Total Job Cost']]),  # Header for the summary block        
+        pd.DataFrame([['Job Number', 'Pay (Reg + O/T)', 'Emp Tax', 'Memo 401k', 'Total Job Cost']]),  # Header for the summary block        
         summary_df
         # # go through total pay per job, and add them to the end of the dataframe
         # pd.DataFrame([[job, round(total_pay_per_job[job], 2)] for job in total_pay_per_job.keys(), ]),
@@ -301,8 +319,18 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
     wb = load_workbook(output_file)
     ws = wb.active
     ws.column_dimensions['A'].width = 25  # 1 Excel width unit ≈ 7 pixels
-    wb.save(output_file)
+    
+    # Set Memo 401k columns to 82px (~11.7 Excel width units, since 1 unit ≈ 7 pixels)
+    memo_401k_width = 82 / 7  # ≈ 11.7
 
+    # Find all columns with 'Memo 401k' in the header row (second row in your file)
+    header_row = next(ws.iter_rows(min_row=2, max_row=2, values_only=True))
+    for idx, col_name in enumerate(header_row, 1):
+        if col_name == 'Memo 401k':
+            col_letter = get_column_letter(idx)
+            ws.column_dimensions[col_letter].width = memo_401k_width
+    
+    wb.save(output_file)
     apply_formatting_to_excel(output_file)
 
     return output_file, errors
