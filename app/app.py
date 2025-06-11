@@ -6,7 +6,7 @@ from taxes import calculate_tax, get_tax
 from openpyxl.utils import get_column_letter
 
 
-def update_bonus_vacation(cell_value, total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i):
+def update_bonus_vacation(cell_value, total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i):
     if isinstance(cell_value, str):
         if 'BN' in cell_value:
             match = re.search(r'BN\s*([\d,]+\.\d{2})', cell_value)
@@ -19,13 +19,19 @@ def update_bonus_vacation(cell_value, total_bonus, total_vacation, employee_has_
             if match:
                 total_vacation += float(match.group(1).replace(',', ''))
                 employee_has_VAC = True
-                
+        elif 'HOL' in cell_value: 
+            match = re.search(r'HOL\s*([\d,]+\.\d{2})', cell_value)
+            if match:
+                total_holiday += float(match.group(1).replace(',', ''))
+                employee_has_HOL = True
         #handle special case: VAC and BN both reported for a single employee. 
         # WARNING: this only works if the rows are right next to each other. Ie. 3,4 or 1,2... etc. 
-        if (employee_has_VAC and employee_has_BN):
+        if (employee_has_VAC and employee_has_BN and employee_has_HOL):
+            c_employee_row_i = c_employee_row_i - 1       
+        elif ((employee_has_VAC and employee_has_BN) or (employee_has_VAC and employee_has_HOL) or (employee_has_BN and employee_has_HOL)):
             c_employee_row_i = c_employee_row_i - 1       
              
-    return total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i
+    return total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i
 
 def process_payroll_file(filepath, tax_data):
     df = pd.read_excel(filepath, sheet_name='Payroll Register', header=None)
@@ -35,12 +41,14 @@ def process_payroll_file(filepath, tax_data):
 
     total_bonus = 0.0
     total_vacation = 0.0
+    total_holiday = 0.0
     un_coded_pay = 0.0
     gross_total = 0.0
     
     errors = []
     employee_has_BN = False
     employee_has_VAC = False
+    employee_has_HOL = False
 
     for i in range(len(df)):
         row = df.iloc[i]                
@@ -54,9 +62,10 @@ def process_payroll_file(filepath, tax_data):
             c_employee_row_i = 1
             employee_has_BN = False
             employee_has_VAC = False
+            employee_has_HOL = False
             
             ##handle bonus and vacation
-            total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i)
+            total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i)
             
             job_number = '0001'
             if "W-In Cost" in row[0]:
@@ -102,7 +111,7 @@ def process_payroll_file(filepath, tax_data):
             
             c_employee_row_i = c_employee_row_i + 1
 
-            total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i)
+            total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i)
             
             try:
                 reg_pay = float(str(row[4]).replace(',', '')) if pd.notna(row[4]) else 0.0
@@ -143,7 +152,7 @@ def process_payroll_file(filepath, tax_data):
         elif "H Dept" in row[0] and current_employee:              
             c_employee_row_i = c_employee_row_i + 1
             
-            total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, employee_has_BN, employee_has_VAC, c_employee_row_i)
+            total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i = update_bonus_vacation(row[6], total_bonus, total_vacation, total_holiday, employee_has_BN, employee_has_VAC, employee_has_HOL, c_employee_row_i)
             
             try:
                 reg_pay = float(str(row[4]).replace(',', '')) if pd.notna(row[4]) else 0.0
@@ -256,7 +265,7 @@ def process_payroll_file(filepath, tax_data):
     ]
 
     final_df = pd.DataFrame(final_data)
-    return final_df, grand_sum_total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, total_memo_401k_per_job, errors
+    return final_df, grand_sum_total_pay, total_bonus, total_vacation, total_holiday, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, total_memo_401k_per_job, errors
 
 
 def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_file):
@@ -269,7 +278,7 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
         print("Errors in tax file processing:", errors_tax)
     
     # Process the payroll file
-    payroll_df, total_pay, total_bonus, total_vacation, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, total_memo_401k_per_job, errors_payroll = process_payroll_file(payroll_filepath, tax_data)
+    payroll_df, total_pay, total_bonus, total_vacation, total_holiday, un_coded_pay, gross_total, total_pay_per_job, total_emp_tax_per_job, total_memo_401k_per_job, errors_payroll = process_payroll_file(payroll_filepath, tax_data)
     if errors_payroll:
         errors.extend(errors_payroll)
         print("Errors in payroll file processing:", errors_payroll)
@@ -297,10 +306,11 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
             [round(total_pay, 2), 'Total Pay (Reg + O/T)'],
             [round(total_bonus, 2), 'Total Bonus'],
             [round(total_vacation, 2), 'Total Vacation'],
+            [round(total_holiday, 2), 'Total Holiday'],
             [round(un_coded_pay, 2), 'Total Uncoded Pay'],
-            [round(total_pay + total_bonus + total_vacation + un_coded_pay, 2), 'Sheet Total Pay + Bonus + Vacation + Uncoded'],
+            [round(total_pay + total_bonus + total_vacation + total_holiday + un_coded_pay, 2), 'Sheet Total Pay + Bonus + Vacation + Holiday + Uncoded'],
             [round(gross_total, 2), 'Report Total (Gross)'],  # New 5th summary row for gross pay
-            [abs(round(gross_total - (total_pay + total_bonus + total_vacation + un_coded_pay), 2)), 'diff'],  # New 6th summary row for gross pay minus bonus
+            [abs(round(gross_total - (total_pay + total_bonus + total_vacation + total_holiday + un_coded_pay), 2)), 'diff'],  # New 6th summary row for gross pay minus bonus
             
         ]),
         pd.DataFrame([[]]*3),  # 3 empty rows
@@ -340,3 +350,5 @@ def extract_job_costing_from_raw_excel(payroll_filepath, tax_filepath, output_fi
 # extract_job_costing_from_raw_excel("payroll/payroll_test_16.xls", "tax/tax_test_16.xlsx", "formatted_output_16.xlsx")
 # extract_job_costing_from_raw_excel("payroll/payroll_test_18.xls", "tax/tax_test_18.xlsx", "formatted_output_18.xlsx")
 # extract_job_costing_from_raw_excel("payroll/payroll_test_20.xls", "tax/tax_test_20.xlsx", "formatted_output_20.xlsx")
+# extract_job_costing_from_raw_excel("payroll/payroll_test_24.xls", "tax/tax_test_24.xlsx", "formatted_output_24.xlsx")
+
